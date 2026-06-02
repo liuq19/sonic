@@ -1,12 +1,11 @@
-//go:build !go1.24
-// +build !go1.24
-
 package rt
 
 import (
 	"unsafe"
 )
 
+// GoMapIterator mirrors the pre-Go 1.24 hiter layout. Go 1.24+ runtime
+// provides a linkname compatibility shim whose real iterator pointer lands in H.
 type GoMapIterator struct {
 	K           unsafe.Pointer
 	V           unsafe.Pointer
