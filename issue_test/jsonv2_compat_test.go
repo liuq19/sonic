@@ -1,5 +1,5 @@
-//go:build go1.17 && !go1.28
-// +build go1.17,!go1.28
+//go:build goexperiment.jsonv2
+// +build goexperiment.jsonv2
 
 /*
  * Copyright 2021 ByteDance Inc.
@@ -17,21 +17,11 @@
  * limitations under the License.
  */
 
-package api
+package issue_test
 
-import (
-	"github.com/bytedance/sonic/internal/decoder/optdec"
-	"github.com/bytedance/sonic/internal/envs"
-)
-
-var (
-	pretouchImpl     = optdec.Pretouch
-	pretouchManyImpl = optdec.PretouchMany
-	decodeImpl       = optdec.Decode
-)
-
-func init() {
-	// when in aarch64, we enable all optimization
-	envs.EnableOptDec()
-	envs.EnableFastMap()
-}
+// stdUsesJSONV2 reports whether the standard library encoding/json package is
+// using the json v2 backend. This is the default since Go 1.27 (opt out with
+// GOEXPERIMENT=nojsonv2). Sonic still implements v1 semantics, so tests that
+// assert exact std parity gate those assertions in this mode. See
+// docs/sonic-go127-compatibility.md for the divergence list.
+const stdUsesJSONV2 = true

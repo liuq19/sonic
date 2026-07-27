@@ -1,11 +1,14 @@
-/**
- * Copyright 2025 ByteDance Inc.
+//go:build !goexperiment.jsonv2
+// +build !goexperiment.jsonv2
+
+/*
+ * Copyright 2021 ByteDance Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *     https://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,23 +19,8 @@
 
 package issue_test
 
-import (
-	"encoding/json"
-	"testing"
-
-	"github.com/bytedance/sonic"
-	"github.com/stretchr/testify/require"
-)
-
-func TestFloatMap(t *testing.T) {
-	js, err := sonic.ConfigStd.Marshal(map[float64]string{1: ""})
-
-	if stdUsesJSONV2 {
-		require.Error(t, err)
-		return
-	}
-
-	js0, err0 := json.Marshal(map[float64]string{1: ""})
-	require.Equal(t, err0 == nil, err == nil)
-	require.Equal(t, string(js0), string(js))
-}
+// stdUsesJSONV2 reports whether the standard library encoding/json package is
+// using the json v2 backend. It is false here: either Go < 1.27, or the
+// experiment was disabled with GOEXPERIMENT=nojsonv2. See
+// docs/sonic-go127-compatibility.md.
+const stdUsesJSONV2 = false
