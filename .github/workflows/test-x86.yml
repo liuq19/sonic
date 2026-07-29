@@ -4,6 +4,33 @@ name: Unit Test
 on: pull_request
 
 jobs:
+  loader-go127:
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, windows-latest, macos-15-intel]
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.0-rc.2'
+          cache: true
+          cache-dependency-path: loader/go.sum
+
+      - name: Loader Test
+        working-directory: loader
+        env:
+          GOWORK: "off"
+        run: go test -race ./... -count=1
+
   build:
     permissions:
       contents: read
