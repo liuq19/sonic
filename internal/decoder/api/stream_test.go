@@ -229,14 +229,14 @@ func TestBuffered(t *testing.T) {
 	ee4 := d2.Decode(&v2)
 	assert.Equal(t, es4, ee4)
 	println(str[d1.InputOffset()-5 : d1.InputOffset()+5])
-	assert.Equal(t, d1.InputOffset(), d2.InputOffset()-1)
+	assert.Equal(t, d1.InputOffset(), d2.InputOffset())
 
 	require.Equal(t, d1.More(), d2.More())
 	es2 := d1.Decode(&v1)
 	ee2 := d2.Decode(&v2)
 	assert.Equal(t, es2, ee2)
 	println(str[d1.InputOffset()-5 : d1.InputOffset()+5])
-	assert.Equal(t, d1.InputOffset(), d2.InputOffset()-1)
+	assert.Equal(t, d1.InputOffset(), d2.InputOffset())
 }
 
 func BenchmarkDecodeStream_Std(b *testing.B) {

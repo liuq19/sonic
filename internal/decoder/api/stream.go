@@ -39,7 +39,7 @@ type StreamDecoder struct {
 	scanp   int
 	scanned int64
 	err     error
-	readErr error // saved error from numeric lookahead
+	readErr error
 	Decoder
 }
 
@@ -50,7 +50,7 @@ var bufPool = sync.Pool{
 }
 
 func freeBytes(buf []byte) {
-	if rt.CanSizeResue(cap(buf)) {
+	if cap(buf) != 0 && rt.CanSizeResue(cap(buf)) {
 		bufPool.Put(buf[:0])
 	}
 }
@@ -67,70 +67,62 @@ func NewStreamDecoder(r io.Reader) *StreamDecoder {
 // Either io error from underlying io.Reader (except io.EOF)
 // or syntax error from data will be recorded and stop subsequently decoding.
 func (self *StreamDecoder) Decode(val interface{}) (err error) {
-	// read more data into buf
-	if self.More() {
-		var s = self.scanp
-	try_skip:
-		var e = len(self.buf)
-		var src = rt.Mem2Str(self.buf[s:e])
-		// try skip
-		var x = 0
-		if y := native.SkipOneFast(&src, &x); y < 0 {
-			if self.readMore() {
-				goto try_skip
-			}
-			if self.err == nil {
-				self.err = SyntaxError{e, self.s, types.ParsingError(-s), ""}
-				self.setErr(self.err)
-			}
-			return self.err
-		} else {
-			s = y + s
-			e = x + s
-			if e == len(self.buf) && isNumberStart(self.buf[s]) {
-				// A number at a read boundary may continue in the next read.
-				// Look ahead without skipping delimiters or releasing the token.
-				if self.readErr == nil {
-					self.readNumberMore()
-					goto try_skip
-				}
-				if self.readErr != io.EOF {
-					self.scanned += int64(self.scanp)
-					self.scanp = 0
-					self.setErr(self.readErr)
-					return self.err
-				}
-			}
-		}
-
-		// must copy string here for safety
-		self.Decoder.Reset(string(self.buf[s:e]))
-		err = self.Decoder.Decode(val)
-		if err != nil {
-			self.setErr(err)
-			return
-		}
-
-		self.scanp = e
-		_, empty := self.scan()
-		if empty {
-			// no remain valid bytes, thus we just recycle buffer
-			mem := self.buf
-			self.buf = nil
-			freeBytes(mem)
-			self.err = self.readErr
-		} else {
-			// remain undecoded bytes, move them onto head
-			n := copy(self.buf, self.buf[self.scanp:])
-			self.buf = self.buf[:n]
-		}
-
-		self.scanned += int64(self.scanp)
-		self.scanp = 0
-		return nil
+	if !self.More() {
+		return self.err
 	}
 
-	return self.err
+	s := self.scanp
+	number := isNumberStart(self.buf[s])
+	var e int
+	for {
+		src := rt.Mem2Str(self.buf[s:])
+		x := 0
+		y := 0
+		if number {
+			x = streamNumberEnd(self.buf[s:])
+		} else {
+			y = native.SkipOneFast(&src, &x)
+		}
+		if y >= 0 {
+			e = s + x
+			// At a read boundary, a valid number may still gain more digits.
+			// A delimiter or EOF lets the decoder validate the complete token.
+			if e < len(self.buf) || !number || self.readErr == io.EOF {
+				s += y
+				break
+			}
+		} else if types.ParsingError(-y) != types.ERR_EOF {
+			err = SyntaxError{x, string(self.buf[s:]), types.ParsingError(-y), ""}
+			self.setErr(err)
+			return err
+		}
+
+		if self.readErr != nil {
+			err = self.readErr
+			if err == io.EOF {
+				err = io.ErrUnexpectedEOF
+			}
+			self.setErr(err)
+			return err
+		}
+		self.readMore()
+	}
+
+	// Keep decoded strings independent of the pooled read buffer.
+	self.Decoder.Reset(string(self.buf[s:e]))
+	if err = self.Decoder.Decode(val); err != nil {
+		self.setErr(err)
+		return err
+	}
+	self.scanp = e
+	if e == len(self.buf) {
+		self.scanned += int64(e)
+		self.scanp = 0
+		mem := self.buf
+		self.buf = nil
+		freeBytes(mem)
+	}
+	return nil
 }
 
 // InputOffset returns the input stream byte offset of the current decoder position.
@@ -155,56 +147,24 @@ func (self *StreamDecoder) More() bool {
 	return err == nil && c != ']' && c != '}'
 }
 
-// More reports whether there is another element in the
-// current array or object being parsed.
-func (self *StreamDecoder) readMore() bool {
-	if self.err != nil {
-		return false
-	}
+// readMore appends bytes without consuming or releasing the current token.
+// An error returned with data is saved until those bytes have been examined.
+func (self *StreamDecoder) readMore() error {
 	if self.readErr != nil {
-		self.setErr(self.readErr)
-		return false
+		return self.readErr
 	}
-
-	var err error
-	var n int
-	for {
-		// Grow buffer if not large enough.
-		l := len(self.buf)
-		realloc(&self.buf)
-
-		n, err = self.r.Read(self.buf[l:cap(self.buf)])
-		self.buf = self.buf[:l+n]
-
-		self.scanp = l
-		_, empty := self.scan()
-		if !empty {
-			return true
-		}
-
-		// buffer has been scanned, now report any error
-		if err != nil {
-			self.setErr(err)
-			return false
-		}
-	}
-}
-
-func isNumberStart(c byte) bool {
-	return c == '-' || (c >= '0' && c <= '9')
-}
-
-// readNumberMore appends one read and leaves cursor and buffer ownership intact.
-func (self *StreamDecoder) readNumberMore() {
 	l := len(self.buf)
 	realloc(&self.buf)
 	n, err := self.r.Read(self.buf[l:cap(self.buf)])
 	self.buf = self.buf[:l+n]
 	self.readErr = err
+	return err
 }
 
 func (self *StreamDecoder) setErr(err error) {
 	self.err = err
+	self.scanned += int64(self.scanp)
+	self.scanp = 0
 	mem := self.buf[:0]
 	self.buf = nil
 	freeBytes(mem)
@@ -248,14 +208,44 @@ func (self *StreamDecoder) refill() error {
 		self.scanp = 0
 	}
 
-	// Grow buffer if not large enough.
-	realloc(&self.buf)
+	return self.readMore()
+}
 
-	// Read. Delay error for next iteration (after scan).
-	n, err := self.r.Read(self.buf[len(self.buf):cap(self.buf)])
-	self.buf = self.buf[0 : len(self.buf)+n]
+func isNumberStart(c byte) bool {
+	return c == '-' || (c >= '0' && c <= '9')
+}
 
-	return err
+// streamNumberEnd locates a numeric token without reading into the next value.
+// Syntax validation remains with Decoder.Decode, including incomplete fractions
+// or exponents at EOF. src starts with a digit or '-'.
+func streamNumberEnd(src []byte) int {
+	i := 0
+	if src[i] == '-' {
+		i++
+	}
+	if i < len(src) && src[i] == '0' {
+		i++
+	} else {
+		i = streamDigitsEnd(src, i)
+	}
+	if i < len(src) && src[i] == '.' {
+		i = streamDigitsEnd(src, i+1)
+	}
+	if i < len(src) && (src[i] == 'e' || src[i] == 'E') {
+		i++
+		if i < len(src) && (src[i] == '+' || src[i] == '-') {
+			i++
+		}
+		i = streamDigitsEnd(src, i)
+	}
+	return i
+}
+
+func streamDigitsEnd(src []byte, i int) int {
+	for i < len(src) && src[i] >= '0' && src[i] <= '9' {
+		i++
+	}
+	return i
 }
 
 func realloc(buf *[]byte) bool {

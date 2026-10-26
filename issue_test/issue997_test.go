@@ -12,7 +12,7 @@ import (
 )
 
 func TestIssue997StreamNumberBoundaries(t *testing.T) {
-	for _, input := range []string{"42 43", "-7 1.5", "1e3 1e-3"} {
+	for _, input := range []string{"42 43", "-7 1.5", "1e3 1e-3", "42" + strings.Repeat(" ", 32) + "43"} {
 		t.Run(input, func(t *testing.T) {
 			want := json.NewDecoder(iotest.OneByteReader(strings.NewReader(input)))
 			want.UseNumber()
