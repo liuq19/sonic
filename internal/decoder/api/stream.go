@@ -39,6 +39,7 @@ type StreamDecoder struct {
 	scanp   int
 	scanned int64
 	err     error
+	readErr error // saved error from numeric lookahead
 	Decoder
 }
 
@@ -86,6 +87,20 @@ func (self *StreamDecoder) Decode(val interface{}) (err error) {
 		} else {
 			s = y + s
 			e = x + s
+			if e == len(self.buf) && isNumberStart(self.buf[s]) {
+				// A number at a read boundary may continue in the next read.
+				// Look ahead without skipping delimiters or releasing the token.
+				if self.readErr == nil {
+					self.readNumberMore()
+					goto try_skip
+				}
+				if self.readErr != io.EOF {
+					self.scanned += int64(self.scanp)
+					self.scanp = 0
+					self.setErr(self.readErr)
+					return self.err
+				}
+			}
 		}
 
 		// must copy string here for safety
@@ -103,6 +118,7 @@ func (self *StreamDecoder) Decode(val interface{}) (err error) {
 			mem := self.buf
 			self.buf = nil
 			freeBytes(mem)
+			self.err = self.readErr
 		} else {
 			// remain undecoded bytes, move them onto head
 			n := copy(self.buf, self.buf[self.scanp:])
@@ -111,6 +127,7 @@ func (self *StreamDecoder) Decode(val interface{}) (err error) {
 
 		self.scanned += int64(self.scanp)
 		self.scanp = 0
+		return nil
 	}
 
 	return self.err
@@ -144,6 +161,10 @@ func (self *StreamDecoder) readMore() bool {
 	if self.err != nil {
 		return false
 	}
+	if self.readErr != nil {
+		self.setErr(self.readErr)
+		return false
+	}
 
 	var err error
 	var n int
@@ -167,6 +188,19 @@ func (self *StreamDecoder) readMore() bool {
 			return false
 		}
 	}
+}
+
+func isNumberStart(c byte) bool {
+	return c == '-' || (c >= '0' && c <= '9')
+}
+
+// readNumberMore appends one read and leaves cursor and buffer ownership intact.
+func (self *StreamDecoder) readNumberMore() {
+	l := len(self.buf)
+	realloc(&self.buf)
+	n, err := self.r.Read(self.buf[l:cap(self.buf)])
+	self.buf = self.buf[:l+n]
+	self.readErr = err
 }
 
 func (self *StreamDecoder) setErr(err error) {
